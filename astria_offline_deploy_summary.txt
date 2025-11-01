@@ -1,0 +1,115 @@
+Astria Charts 离线部署问题与解决总结
+======================================
+
+环境: Windows + WSL2 + Docker Desktop
+项目路径: /root/astria-charts
+
+------------------------------------------------------------
+一、问题概览
+------------------------------------------------------------
+1. registry-1.docker.io 超时 → 被墙，无法拉 Bitnami PostgreSQL Chart
+4. blockscout 仓库 404 → GitHub Pages 无法访问
+5. Chart.yaml file is missing → Helm 依赖不能直接用 .tgz 文件，需要解压为目录
+
+------------------------------------------------------------
+二、最终离线成功方案
+------------------------------------------------------------
+1. 目录结构：
+/root/astria-charts/
+├── charts/
+│   ├── evm-stack/
+│   ├── postgresql/ (解压后的 chart)
+│   └── postgresql-15.2.4.tgz
+└── dev/values/rollup/dev.yaml
+
+2. 离线包准备：
+联网机执行：
+    helm repo add bitnami https://charts.bitnami.com/bitnami
+    helm pull bitnami/postgresql --version 15.2.4
+复制 postgresql-15.2.4.tgz 到 /root/astria-charts/charts/
+并解压：
+    mkdir /root/astria-charts/charts/postgresql
+    tar -xzf /root/astria-charts/charts/postgresql-15.2.4.tgz -C /root/astria-charts/charts/postgresql --strip-components=1
+
+3. 修改 evm-stack Chart.yaml：
+路径：/root/astria-charts/charts/evm-stack/Chart.yaml
+改为：
+    - name: postgresql
+      version: "15.2.4"
+      repository: "file://../postgresql"
+      condition: postgresql.enabled
+
+(删除或注释 blockscout 段)
+
+4. 关闭 blockscout：
+文件：/root/astria-charts/dev/values/rollup/dev.yaml
+修改：
+    blockscout-stack:
+      enabled: false
+
+5. 重建依赖：
+    cd /root/astria-charts
+    rm -f charts/evm-stack/Chart.lock
+    helm dependency build charts/evm-stack
+
+6. 部署：
+    just deploy rollup
+
+------------------------------------------------------------
+
+------------------------------------------------------------
+四、经验要点
+------------------------------------------------------------
+- file:// 必须指向含 Chart.yaml 的目录
+- 改依赖后必须重建锁文件
+- values 控制启用与跳过
+- 本地包统一放 /root/astria-charts/charts/
+- blockscout 非核心，可关
+
+------------------------------------------------------------
+Astria 部署阶段问题总结：Ingress + Sequencer + Executor
+============================================================
+
+一、问题现象
+------------------------------------------------------------
+执行命令：
+    curl http://rpc.sequencer.127.0.0.1.nip.io/health
+    curl http://executor.astria.127.0.0.1.nip.io
+
+结果：
+    - sequencer 返回 {"jsonrpc":"2.0","id":-1,"result":{}}
+    - executor 无任何输出
+
+二、原因分析
+------------------------------------------------------------
+1. Sequencer 的 /health 接口是 HTTP GET，可直接访问；
+   返回 JSON 代表 sequencer RPC 服务和 Ingress 都已正常工作。
+
+2. Executor 遵循以太坊 JSON-RPC 规范，默认不响应 GET 请求；
+   需要使用 POST 请求并带 JSON body 才会返回结果。
+   因此 GET / 无输出是正常现象，不是错误。
+
+Ingress 映射关系：
+| 域名                              | Service 名称                          | 端口  | 功能 |
+|-----------------------------------|----------------------------------------|-------|------|
+| rpc.sequencer.127.0.0.1.nip.io    | node0-sequencer-rpc-service            | 26657 | Sequencer JSON-RPC |
+| executor.astria.127.0.0.1.nip.io  | astria-evm-service                     | 8545  | EVM Executor JSON-RPC (HTTP) |
+| ws-executor.astria.127.0.0.1.nip.io | astria-evm-service                   | 8546  | EVM Executor WebSocket |
+| faucet.astria.127.0.0.1.nip.io    | astria-evm-faucet-service              | 8080  | Faucet 发币服务 |
+
+三、正确验证方法
+------------------------------------------------------------
+使用 POST 测试 executor：
+
+# 查询客户端版本
+curl -s http://executor.astria.127.0.0.1.nip.io \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"web3_clientVersion","params":[],"id":1}'
+
+返回数据：{"jsonrpc":"2.0","id":1,"result":"Geth/v1.14.3-stable-d391a0fa/linux-amd64/go1.22.12"}
+
+# 查询区块高度
+curl -s http://executor.astria.127.0.0.1.nip.io \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
+返回数据：{"jsonrpc":"2.0","id":1,"result":"0x32"}

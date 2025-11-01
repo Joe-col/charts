@@ -48,12 +48,9 @@ dependencies:
     condition: evm-bridge-withdrawer.enabled
   - name: postgresql
     version: "15.2.4"
-    repository: "oci://registry-1.docker.io/bitnamicharts"
+    repository: "file://../postgresql"
     condition: postgresql.enabled
-  - name: blockscout-stack
-    repository: "https://blockscout.github.io/helm-charts"
-    version: "1.6.8"
-    condition: blockscout-stack.enabled
+
 
 # This is the version number of the application being deployed. This version number should be
 # incremented each time you make changes to the application. Versions are not expected to

@@ -178,7 +178,7 @@ postgresql:
     logConnections: true
     logDisconnections: true
 blockscout-stack:
-  enabled: true
+  enabled: false
   config:
     network:
       id: 1337
